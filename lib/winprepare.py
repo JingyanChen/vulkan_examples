@@ -10,7 +10,7 @@ sdk_inc_link = os.path.join(root_dir, 'vulkan_sdk')
 sdk_inc_linke_cmd = 'mklink /j %s %s' % (sdk_inc_link, sdk_inc_path) 
 
 
-if not os.path.exists(km_inc_link):
+if not os.path.exists(sdk_inc_link):
     print(sdk_inc_linke_cmd)
     os.system(sdk_inc_linke_cmd)
 

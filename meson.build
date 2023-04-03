@@ -3,7 +3,6 @@ project(
   ['c', 'cpp'],
   version : run_command(
     [find_program('python3', 'python'), 'bin/meson_get_version.py'],
-    [find_program('python3', 'python'), 'lib/winprepare.py'],
     check : true
   ).stdout(),
   license : 'MIT',
@@ -22,4 +21,7 @@ vulkanLibs=meson.get_compiler('c').find_library('vulkan-1',
 glm_header_dir = join_paths(meson.source_root(),'lib/glm/include')
 
 
-executable('demo', 'src/main.cpp',dependencies : [glfwLibs,vulkanLibs], include_directories : [glfw_header_dir,vulkan_sdk_header_dir,glm_header_dir])
+executable('demo', 'src/main.cpp',
+dependencies : [glfwLibs,vulkanLibs], 
+include_directories : [glfw_header_dir,vulkan_sdk_header_dir,glm_header_dir],
+cpp_args: '/std:c++17')
