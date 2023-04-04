@@ -21,7 +21,12 @@ vulkanLibs=meson.get_compiler('c').find_library('vulkan-1',
 glm_header_dir = join_paths(meson.source_root(),'lib/glm/include')
 
 
-executable('demo', 'src/main.cpp',
+executable('demo', ['src/demo.cpp'],
 dependencies : [glfwLibs,vulkanLibs], 
 include_directories : [glfw_header_dir,vulkan_sdk_header_dir,glm_header_dir],
 cpp_args: '/std:c++17')
+
+executable('firstTriangle', ['src/firstTriangle.cpp'],
+dependencies : [glfwLibs,vulkanLibs], 
+include_directories : [glfw_header_dir,vulkan_sdk_header_dir,glm_header_dir,join_paths(meson.source_root(),'arch')],
+cpp_args: ['/std:c++17','-D_DEBUG_'])
