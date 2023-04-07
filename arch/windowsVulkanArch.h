@@ -2,6 +2,7 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -29,6 +30,7 @@
 
 /*related code maroco*/
 #define GLFW_WINDOW_CODE
+#define VK_KHR_SURFACE_CODE
 #define VULKAN_INSTANCE_CODE
 #define VALIDATION_LAYER_CODE
 #define PHYSCIAL_DEVICE_AND_QUEUE_FAMILY_CODE
@@ -67,6 +69,7 @@ class vkGraphicsDevice{
 
         initialWindowWithGLFW();
         initialVulkanInstance();
+        initialSurfaceExtWithGLFW();
         pickPhysicalDevice();
         createLogicalDevice();
     }
@@ -114,7 +117,35 @@ class vkGraphicsDevice{
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
     }
-    #endif 
+    #endif
+    /* extesion : surface */
+    #ifdef VK_KHR_SURFACE_CODE
+    /*
+     * when we create instance we can inquire what extesion does vulkan library support
+     * VK_KHR_surface is one of the extension that instance support
+     * 
+     * two opertion should be done
+     * 1. inqure whether the physical is support present queue family : findQueueFamilies as a condition in pickPhysicalDevice
+     * 2. create present queue when we create logic device : createLogicalDevice
+     */
+    VkSurfaceKHR surface;
+    void initialSurfaceExtWithGLFW(){
+        /*
+        VkWin32SurfaceCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+        createInfo.hwnd = glfwGetWin32Window(window); //get windiows handle from glfw
+        createInfo.hinstance = GetModuleHandle(nullptr); 
+
+        if (vkCreateWin32SurfaceKHR(instance, &createInfo, nullptr, &surface) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create window surface!");
+        }
+        //This is glfwCreateWindowSurface implement
+        */
+        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create window surface!");
+        }
+    }
+    #endif
     /* vulkan instance related*/
     #ifdef VULKAN_INSTANCE_CODE
     VkInstance instance;
@@ -168,7 +199,7 @@ class vkGraphicsDevice{
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
         std::vector<VkExtensionProperties> extensions(extensionCount);
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-        printf("available %d extensions:\n",extensionCount);
+        printf("instance level - available %d extensions:\n",extensionCount);
         for (const auto& extension : extensions) {
             std::cout << '\t' << extension.extensionName << '\n';
         }
@@ -227,10 +258,18 @@ class vkGraphicsDevice{
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
     struct QueueFamilyIndices {
+        /* in windwos case , in order to dispaly a window 
+         * we need to have two queue family
+         * grapicsFamily and presentFamily
+         */
         std::optional<uint32_t> graphicsFamily;
         std::optional<uint32_t> presentFamily;
 
         bool isComplete() {
+            /*
+             * if queue family is found they will have a vlaue such as 0,1,2 etc
+             * in order to distinguish 0 and Notsupport , we use optional datastruct 
+             */
             return graphicsFamily.has_value() && presentFamily.has_value();
         }
     };
@@ -238,6 +277,7 @@ class vkGraphicsDevice{
     /*
      * This function is a helper function 
      * to indicate what queue family does physical device support
+     * store final support information at QueueFamilyIndices
      */
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
         QueueFamilyIndices indices;
@@ -248,30 +288,20 @@ class vkGraphicsDevice{
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
-        #ifdef _DEBUG_
-        std::cout<<"physical device"<< device <<" support queueFamilies:\r\n";
-        #endif
-
         int i = 0;
         for (const auto& queueFamily : queueFamilies) {
 
             if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 indices.graphicsFamily = i;
-                #ifdef _DEBUG_
-                std::cout<<"\t Support graphics queue family\r\n";
-                #endif
             }
-            /*
+            
             VkBool32 presentSupport = false;
             vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
 
             if (presentSupport) {
                 indices.presentFamily = i;
-                #ifdef _DEBUG_
-                std::cout<<"Support presentFamily queue family\r\n";
-                #endif
             }
-            *///todo list prensent relateed
+
             if (indices.isComplete()) {
                 break;
             }
@@ -295,7 +325,15 @@ class vkGraphicsDevice{
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
         vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
-        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        /*
+         * as comment in header of VK_KHR_SURFACE_CODE
+         * queue family is support or not is important condition for picking up a physical device
+         */
+        
+        QueueFamilyIndices indices = findQueueFamilies(device);
+
+
+        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && indices.isComplete();
     }
     void pickPhysicalDevice() {
 
@@ -315,6 +353,16 @@ class vkGraphicsDevice{
             //form vulkan instance
             if (isDeviceSuitable(device)) {
                 physicalDevice = device;
+                #ifdef _DEBUG_
+                QueueFamilyIndices indices = findQueueFamilies(device);
+                std::cout<<"selected physical device: "<< device <<" support queueFamilies:\r\n";
+
+                if(indices.graphicsFamily.has_value())
+                    std::cout<<"\t Support graphics queue family\r\n";
+                if(indices.presentFamily.has_value())
+                    std::cout<<"\t Support presentFamily queue family\r\n";
+                #endif
+
                 break;
             }
         }
@@ -331,12 +379,13 @@ class vkGraphicsDevice{
     VkQueue presentQueue;
     void createLogicalDevice() {
         //physicalDevice will stored the most suitable device in physical device list by vulkan lib
-        //find picked physical device supporting queue family 
+        //find picked physical device supporting queue family again
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
         std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
+        /*crate queue family info*/
         float queuePriority = 1.0f;
         for (uint32_t queueFamily : uniqueQueueFamilies) {
             VkDeviceQueueCreateInfo queueCreateInfo{};
@@ -352,13 +401,14 @@ class vkGraphicsDevice{
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
+        /* create two queue family */
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
 
         createInfo.pEnabledFeatures = &deviceFeatures;
 
-        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());//todo list
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();//todo list
 
         if (enableValidationLayers) {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
