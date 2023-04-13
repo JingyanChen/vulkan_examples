@@ -110,8 +110,6 @@ class vkGraphicsDevice{
         }
     }
 
-    private:
-
     /* glfw windows related*/
     #ifdef GLFW_WINDOW_CODE
     GLFWwindow* window;
@@ -477,7 +475,7 @@ class vkGraphicsDevice{
                 }
                 if(swapChainSupport){
 
-                    std::cout<<"VK_KHR_SWAPCHAIN_EXTENSION_NAME detail is : \r\n";
+                    std::cout<<"VK_KHR_swapchain detail is : \r\n";
 
                     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
                     std::cout<<"\t support format count : " << swapChainSupport.formats.size()<< "\r\n";
