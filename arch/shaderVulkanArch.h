@@ -51,28 +51,30 @@ class vulkanShader{
          * machine code for execution by GPU does not happen until the
          * graphics pipeline is created
          */
-        VkShaderModule getShaderModule(VkDevice device) {
+        VkShaderModule createShaderModule(VkDevice device,const std::vector<char>& code) {
             VkShaderModuleCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-            createInfo.codeSize = buffer_.size();
-            createInfo.pCode = reinterpret_cast<const uint32_t*>(buffer_.data());
+            createInfo.codeSize = code.size();
+            createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
-            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule_) != VK_SUCCESS) {
+            VkShaderModule shaderModule;
+            if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create shader module!");
             }
-            return shaderModule_;
+
+            return shaderModule;
         }
 
         /* 
          * when create pipeline object , we should record shader stage into shader state create info object
          * This is helper function to set up VkPipelineShaderStageCreateInfo object for shader
          */
-        VkPipelineShaderStageCreateInfo * getShaderStageInfo(){
+        VkPipelineShaderStageCreateInfo getShaderStageInfo(VkDevice device){
             shaderStateCreateInfo_.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             shaderStateCreateInfo_.stage = shaderType_;
-            shaderStateCreateInfo_.module = shaderModule_;
+            shaderStateCreateInfo_.module = createShaderModule(device, buffer_);
             shaderStateCreateInfo_.pName = "main";
-            return &shaderStateCreateInfo_;
+            return shaderStateCreateInfo_;
         }
     private:
         std::vector<char> buffer_;
