@@ -45,13 +45,14 @@ struct QueueFamilyIndices {
      */
     std::optional<uint32_t> graphicsFamily;
     std::optional<uint32_t> presentFamily;
+    std::optional<uint32_t> transferFamily;
 
     bool isComplete() {
         /*
          * if queue family is found they will have a vlaue such as 0,1,2 etc
          * in order to distinguish 0 and Notsupport , we use optional datastruct
          */
-        return graphicsFamily.has_value() && presentFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value() && transferFamily.has_value(); 
     }
 };
 
@@ -335,6 +336,9 @@ class vkGraphicsDevice{
                 indices.graphicsFamily = i;
             }
             
+            if(queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT){
+                indices.transferFamily = i;    
+            }
             VkBool32 presentSupport = false;
             vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
 
@@ -454,10 +458,12 @@ class vkGraphicsDevice{
                 std::cout<<"selected physical device: "<< device <<" support queueFamilies:\r\n";
 
                 if(indices.graphicsFamily.has_value())
-                    std::cout<<"\t Support graphics queue family\r\n";
+                    std::cout<<"\t Support graphics queue family index:" << indices.graphicsFamily.value() << "\r\n";
                 if(indices.presentFamily.has_value())
-                    std::cout<<"\t Support presentFamily queue family\r\n";
-                
+                    std::cout<<"\t Support present queue family index:" << indices.presentFamily.value() << "\r\n";
+                if(indices.transferFamily.has_value())
+                    std::cout<<"\t Support transfer queue family index:"<< indices.transferFamily.value() << "\r\n";
+
                 uint32_t extensionCount;
                 vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
@@ -500,13 +506,14 @@ class vkGraphicsDevice{
     VkDevice device;
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+    VkQueue transferQueue;
     void createLogicalDevice() {
         //physicalDevice will stored the most suitable device in physical device list by vulkan lib
         //find picked physical device supporting queue family again
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-        std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+        std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value(), indices.transferFamily.value() };
 
         /*crate queue family info*/
         float queuePriority = 1.0f;
@@ -547,6 +554,7 @@ class vkGraphicsDevice{
 
         vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
         vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+        vkGetDeviceQueue(device, indices.transferFamily.value(),0, &transferQueue);
     }
     #endif
     /* swap chain extesion related*/
@@ -661,16 +669,16 @@ class vkGraphicsDevice{
          * VK_SHARING_MODE_CONCURRENT: image can be used across multiple queue families without explicit ownership transfers
          */
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-        uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+        uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value() ,indices.transferFamily.value()};
 
-        if (indices.graphicsFamily != indices.presentFamily) {
+        if (indices.graphicsFamily != indices.presentFamily && indices.presentFamily != indices.transferFamily) {
             /*
              * if the queue families differ , then we will be using the concurrent mode to avoid having to do the ownership chapters.
              * concurrent mode requires you to specifu in advance between which queue families ownership will be shared using the
              * queueFamilyIndexCount and pQueueFamilyIndices
              */
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-            createInfo.queueFamilyIndexCount = 2;
+            createInfo.queueFamilyIndexCount = 3;
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
             #ifdef _DEBUG_
             std::cout<< "swap chain image Sharing Mode is VK_SHARING_MODE_CONCURRENT\r\n";

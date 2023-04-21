@@ -31,5 +31,6 @@ cpp_args: '/std:c++17')
 
 subdir('src/firstTriangle')
 subdir('src/firstTriangleWithVertexBuffer')
-
+subdir('src/firstTriangleWithStagingVertexBuffer')
+subdir('src/firstTriangleWithStagingIndexedVertexBuffer')
 
