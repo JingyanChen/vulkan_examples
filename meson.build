@@ -33,4 +33,5 @@ subdir('src/firstTriangle')
 subdir('src/firstTriangleWithVertexBuffer')
 subdir('src/firstTriangleWithStagingVertexBuffer')
 subdir('src/firstTriangleWithStagingIndexedVertexBuffer')
+subdir('src/uniformExamples')
 
