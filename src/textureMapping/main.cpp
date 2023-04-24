@@ -1,20 +1,32 @@
-/*
- * background : 
- * we want use staging buffer(vertex buffer) which allocated in CPU accessible memory
- * and use final vertex buffer which allocated in device local memory
- * then use buffer copy command  move the data(store in staging buffer) to final vertex buffer
- * this feature need physical support transfer opertaions
- */
 #include <stdio.h>
 #include <windowsVulkanArch.h>
 #include <shaderVulkanArch.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
 #include <buffer.h>
+#include <image.h>
+/*
+ * how to use uniform buffer
+ * 1 create descript layout whcih include descript layout info  --- createDescriptorSetLayout
+ * 2 create a pipeline layout object(use pSetLayouts ,not push const now) related to descript layout in crateGraphicsPipeline , 
+ *   then we get a pipelineLayout
+ * 3 create a uniform buffer , size is depend on uniform data size --- createUniformBuffers
+ * 4 create a descript set which alloc from a descript pool -- createDescriptorPool and createDescriptorSets
+ * 5 link descript set and uniform buffer by vkUpdateDescriptorSets -- createDescriptorSets
+ * 6 finally record a bind descriptor command into command buffer link pipelineLayout in step 2 and descriptorset in step 4&5
+ *   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+ * in ap we can update uniform buffer by uniform buffer memory anytime to sync data with gpu. --  updateUniformBuffer
+ */
 
 static vkGraphicsDevice * vulkanDevice = new vkGraphicsDevice(800, 600);
-vulkanShader* vs = new vulkanShader("../src/firstTriangleWithStagingVertexBuffer/meta/vs.spv", VK_SHADER_STAGE_VERTEX_BIT);
-vulkanShader* ps = new vulkanShader("../src/firstTriangleWithStagingVertexBuffer/meta/ps.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+vulkanShader* vs = new vulkanShader("../src/uniformExamples/meta/vs.spv", VK_SHADER_STAGE_VERTEX_BIT);
+vulkanShader* ps = new vulkanShader("../src/uniformExamples/meta/ps.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 struct Vertex {
     glm::vec2 pos;
@@ -68,8 +80,6 @@ struct Vertex {
     }
 
 };
-
-//vertex data is follow
 const std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
     {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
@@ -82,15 +92,24 @@ const std::vector<uint16_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
+struct UniformBufferObject{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
 const int MAX_FRAMES_IN_FLIGHT = 2;
+uint32_t currentFrame = 0;
+
 
 #define PIPELINE_CREATE_RELATED_CODE
 #define FRAMEBUFFER_IMGAE_FINAL_CONTAINER_CODE
 #define COMMAND_BUFFER_RELATED_CODE
 #define RECORD_COMMAND_INTO_COMMAND_BUFFER_CODE
 #define VERTEX_BUFFER_CREATE_CODE
+#define DESCRIPTOR_SET_LAYOUT_UNIFORM_CODE
+#define CREATE_TEXTURE_IMAG_CODE
 #define MAIN_LOOP_CODE
-
 
 
 
@@ -136,8 +155,105 @@ void createCommandBuffer() {
 }
 #endif
 
-#ifdef VERTEX_BUFFER_CREATE_CODE
 
+#ifdef CREATE_TEXTURE_IMAG_CODE
+
+VkImage textureImage;
+VkDeviceMemory textureImageMemory;
+/*
+ * This function load a texture from image file 
+ * then create a stagingBuffer to store texture load from image file
+ * 
+ * create a vkImage and vkImage related
+ */
+void createTextureImage() {
+    /*loading a picture from file*/
+    int texWidth, texHeight, texChannels;
+    stbi_uc* pixels = stbi_load("../src/uniformExamples/texture/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels) {
+        throw std::runtime_error("failed to load texture image!");
+    }
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        imageSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,  /*this is a transfer source buffer*/
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,  /*find memory section in physical device condition , cpu visable and non-cacheable*/
+        stagingBuffer,  /*return  handle*/
+        stagingBufferMemory  /*return Memory handle*/
+    );
+
+    /*copy texture pixel data into staging buffer*/
+    void* data;
+    vkMapMemory(vulkanDevice->device, stagingBufferMemory, 0, imageSize, 0, &data);
+        memcpy(data, pixels, static_cast<size_t>(imageSize));
+    vkUnmapMemory(vulkanDevice->device, stagingBufferMemory);
+
+    stbi_image_free(pixels);
+
+    //then we should create vkImage and related vkImage memory
+    //this helper function crate vkImage inital layout is VK_IMAGE_LAYOUT_UNDEFINED
+    createImage(vulkanDevice->device,
+                vulkanDevice->physicalDevice,
+                texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,  //vkImage attribitue
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, //vkImage related memory attribute
+                textureImage, textureImageMemory);
+
+    /*
+     * trans image layout from VK_IMAGE_LAYOUT_UNDEFINED to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+     * because we will copy vkbuffer into vkImage(vkImage is the des in copy flow), 
+     * so vkImage layout should be VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+     * this function will use pipeline barrier to make sure image layout transition is done
+     */
+    transitionImageLayout(textureImage, //vkImage we create before
+                         VK_FORMAT_R8G8B8A8_SRGB,//vkImage format
+                         VK_IMAGE_LAYOUT_UNDEFINED,//old image layout , do not care
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,//new image layout
+                         //gpu commit comotent
+                         vulkanDevice->device,
+                         vulkanDevice->transferQueue,
+                         commandPool);
+
+    /*copy stagingBuffer vkBuffer(store texture form file) into vkImage(now vkImage have VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) */
+    copyBufferToImage(stagingBuffer, //vkBuffer which store image
+    textureImage, //vkImage which have VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL layout
+    static_cast<uint32_t>(texWidth), //copy size
+    static_cast<uint32_t>(texHeight), //copy size
+    //gpu commit component
+    vulkanDevice->device,
+    vulkanDevice->transferQueue,
+    commandPool);
+
+    //change vkImage layout 
+    transitionImageLayout(textureImage, //vkImage we create before
+                         VK_FORMAT_R8G8B8A8_SRGB,//vkImage format
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,//old image layout , now is transfer dst layout
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,//new image layout
+                         //gpu commit comotent
+                         vulkanDevice->device,
+                         vulkanDevice->transferQueue,
+                         commandPool);
+
+    /*
+     * note : vkImage's layout change two times
+     * 1, VK_IMAGE_LAYOUT_UNDEFINED -> VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (for transfer copy as dst)
+     * 2, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL -> VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (for shader read)
+     * 
+     * two transition have order that 
+     * shader reads should wait on transfer writes, 
+     * specifically the shader reads in the fragment shader, because that's where we're going to use the texture
+     */
+
+}
+#endif
+
+#ifdef VERTEX_BUFFER_CREATE_CODE
+/*helper function , to copy buffer in gpu*/
 static void _copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
     
     //create a command buffer 
@@ -178,7 +294,6 @@ static void _copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize siz
 
     vkFreeCommandBuffers(vulkanDevice->device, commandPool, 1, &commandBuffer);
 }
-
 
 /*
  * we tell vulkan the veretx buffer foramt in create pipeline object 
@@ -229,7 +344,6 @@ void createVertexBuffer() {
     vkDestroyBuffer(vulkanDevice->device, stagingBuffer, nullptr);
     vkFreeMemory(vulkanDevice->device, stagingBufferMemory, nullptr);
 }
-
 VkBuffer indexBuffer;
 VkDeviceMemory indexBufferMemory;
 void createIndexBuffer() {
@@ -275,6 +389,146 @@ void createIndexBuffer() {
 }
 #endif
 
+#ifdef DESCRIPTOR_SET_LAYOUT_UNIFORM_CODE
+/*
+ * we need to provide details about every descriptor binding used in the shaders for pipeline createion
+ * this function create a descript layout object 
+ */
+VkDescriptorSetLayout descriptorSetLayout;
+void createDescriptorSetLayout() {
+
+    /*
+     * there are many discriptor type ,uniform is oen of the descriptor type
+     * wehen wen create a descriptor set we should point out which descriptor type it is , just like buffer type
+     * it can support create many descript use count.
+     */
+    VkDescriptorSetLayoutBinding uboLayoutBinding{};
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboLayoutBinding.descriptorCount = 1;
+    /*
+     * we also need to specify in which shader stages the descriptor is going to be referenced
+     * in this case , only vertex shader will access uniform
+     */
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    /*
+     * the pImmutableSamplers filed is only relevant for image sampling related descriptors.
+     */
+    uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uboLayoutBinding;
+
+    if (vkCreateDescriptorSetLayout(vulkanDevice->device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor set layout!");
+    }
+}
+
+/*this function create a uniform buffer , and map it*/
+std::vector<VkBuffer> uniformBuffers;
+std::vector<VkDeviceMemory> uniformBuffersMemory;
+std::vector<void*> uniformBuffersMapped;
+void createUniformBuffers(){
+    VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+    uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            
+        createBuffer( 
+            vulkanDevice->device,  /*logic device*/
+            vulkanDevice->physicalDevice, /*physical device*/
+            bufferSize,  /*buffer size*/
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,  /*this is a uniform buffer*/
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,  /*find memory section in physical device condition , cpu visable and non-cacheable*/
+            uniformBuffers[i],  /*return  handle*/
+            uniformBuffersMemory[i]  /*return Memory handle*/
+        );
+        /*uniform buffer is persistent mapping*/
+        vkMapMemory(vulkanDevice->device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+    }
+}
+
+void updateUniformBuffer(uint32_t currentImage) {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    UniformBufferObject ubo{};
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.proj = glm::perspective(glm::radians(45.0f), vulkanDevice->swapChainExtent.width / (float) vulkanDevice->swapChainExtent.height, 0.1f, 10.0f);
+
+    ubo.proj[1][1] *= -1;
+
+    memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+}
+
+//create a descriptor pool
+VkDescriptorPool descriptorPool;
+void createDescriptorPool(){
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    //create descriptor pool
+    if (vkCreateDescriptorPool(vulkanDevice->device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor pool!");
+    }
+
+}
+
+//create descripots set
+std::vector<VkDescriptorSet> descriptorSets;
+void createDescriptorSets(){
+    //create a array that has same value descriptorSetLayout
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    allocInfo.pSetLayouts = layouts.data(); //layout has uniform format  information(descriptorSetLayout)
+
+    //create descrpitsets array
+    descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+
+    if (vkAllocateDescriptorSets(vulkanDevice->device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate descriptor sets!");
+    }
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(UniformBufferObject);
+
+        //this struct link descript set we created before in this function and uniform buffer created before 
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = descriptorSets[i]; //get descriptor set object
+        descriptorWrite.dstBinding = 0;//uniform buffer , now it is set as 0 in shader
+        descriptorWrite.dstArrayElement = 0;//descriptor can be array so we specify 0
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//descriptor type is uniform 
+        descriptorWrite.descriptorCount = 1;//
+        descriptorWrite.pBufferInfo = &bufferInfo;//link uniform buffer
+
+        //link descript set(include descript layout (uniform data format)) and uniform buffer
+        vkUpdateDescriptorSets(vulkanDevice->device, 1, &descriptorWrite, 0, nullptr);
+    }
+}
+#endif
 
 #ifdef PIPELINE_CREATE_RELATED_CODE
 VkRenderPass renderPass;
@@ -397,7 +651,7 @@ void crateGraphicsPipeline() {
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     /*multisampling*/
@@ -432,11 +686,11 @@ void crateGraphicsPipeline() {
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
-    /*pipeline layout related*/
+    /*pipeline layout related uniform related*/
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0; // Optional
-    pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
+    pipelineLayoutInfo.setLayoutCount = 1; // number of descriptor layout(include uniform format info)
+    pipelineLayoutInfo.pSetLayouts  = &descriptorSetLayout; // descriptor set layout inster here, we do not use  push const now
 
     if (vkCreatePipelineLayout(vulkanDevice->device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create pipeline layout!");
@@ -595,6 +849,9 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     scissor.extent = vulkanDevice->swapChainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+    //bind descriptor set and layout
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+
     //draw command with index draw
     vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
@@ -643,7 +900,6 @@ void createSyncObjects() {
         }
     }
 }
-uint32_t currentFrame = 0;
 void drawFrame() {
 
     //At the start of the frame, we want to wait until the previous frame has finished, 
@@ -660,6 +916,9 @@ void drawFrame() {
      */
     uint32_t imageIndex;
     VkResult result = vkAcquireNextImageKHR(vulkanDevice->device, vulkanDevice->swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+    /*update uniform data*/
+    updateUniformBuffer(currentFrame);
 
     vkResetCommandBuffer(commandBuffers[currentFrame], 0);
     // select which framebuffer shouled be used into renderpass ,when begain renderpass.
@@ -725,16 +984,23 @@ void drawFrame() {
 #endif
 
 int main() {
+    /*uniform related*/
+    createDescriptorSetLayout();
+    createUniformBuffers();
+    createDescriptorPool();
+    createDescriptorSets();
+
+    createCommandPool();
+    createCommandBuffer();
 
     createRenderPass();
     crateGraphicsPipeline();
     createFramebuffer();
 
-    createCommandPool();
-    createCommandBuffer();
-
     createVertexBuffer();
     createIndexBuffer();
+    
+    createTextureImage();
 
     createSyncObjects();//loop sync object
 

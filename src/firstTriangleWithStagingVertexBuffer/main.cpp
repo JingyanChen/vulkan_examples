@@ -131,7 +131,7 @@ void createCommandBuffer() {
 
 #ifdef VERTEX_BUFFER_CREATE_CODE
 
-static void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+static void _copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
     
     //create a command buffer 
     VkCommandBufferAllocateInfo allocInfo{};
@@ -217,7 +217,7 @@ void createVertexBuffer() {
     );
 
     //we can copy stagingbuffer to vertex buffer use command buffer and queue commit
-    copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+    _copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 
     vkDestroyBuffer(vulkanDevice->device, stagingBuffer, nullptr);
     vkFreeMemory(vulkanDevice->device, stagingBufferMemory, nullptr);

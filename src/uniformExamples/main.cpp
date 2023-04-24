@@ -7,7 +7,7 @@
 
 #include <chrono>
 #include <buffer.h>
-
+#include <image.h>
 /*
  * how to use uniform buffer
  * 1 create descript layout whcih include descript layout info  --- createDescriptorSetLayout
@@ -78,11 +78,16 @@ struct Vertex {
 
 };
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
 };
 
+//index data is follow
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
+};
 
 struct UniformBufferObject{
     glm::mat4 model;
@@ -102,39 +107,92 @@ uint32_t currentFrame = 0;
 #define MAIN_LOOP_CODE
 
 
+/*
+ * Commands in Vulkan, like drawing operations and memory transfers,
+ * are not executed directly using function calls.
+ * You have to record all of the operations you want to perform in command buffer objects
+ *
+ * first will should create CommandPool and then alloc a command buffer for recording command
+ * second , alloc command buffer from command buffer pool
+ */
+#ifdef COMMAND_BUFFER_RELATED_CODE
+VkCommandPool commandPool;
+std::vector<VkCommandBuffer> commandBuffers;
+void createCommandPool() {
+    QueueFamilyIndices queueFamilyIndices = vulkanDevice->findQueueFamilies(vulkanDevice->physicalDevice);
+
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    //get graphics queue index in findQueueFamilies
+    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+
+    if (vkCreateCommandPool(vulkanDevice->device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create command pool!");
+    }
+}
+
+/*secondary we can alloc a turely command buffer from commandPool we create before */
+void createCommandBuffer() {
+
+    commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+    if (vkAllocateCommandBuffers(vulkanDevice->device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate command buffers!");
+    }
+}
+#endif
+
+
 #ifdef VERTEX_BUFFER_CREATE_CODE
 
-/*
- * GPU can offer different types of memory to allocate from.each type of memory varies in terms of allowed 
- * opertions and performance characteristicxs.
- * 
- * we should combine the requirement of the buffer and our own application requirements to find the right type of 
- * memory to use.
- **/
-uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+static void __copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+    
+    //create a command buffer 
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = commandPool;
+    allocInfo.commandBufferCount = 1;
 
-    /*
-     * inquire what memory type does physical device support
-     * memProperties will retuen tow info 
-     * 1. memory tpye
-     * 2. memoryHeaps:Memory heaps are distinct memory resources like dedicated VRAM and swap space in RAM for when VRAM runs out
-     */
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(vulkanDevice->physicalDevice, &memProperties);
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(vulkanDevice->device, &allocInfo, &commandBuffer);
+    
+    //begin command buffer
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-    #if _DEBUG_
-    printf("0x%x Physical device support %d memory type",(uint32_t)vulkanDevice->physicalDevice,(uint32_t)memProperties.memoryTypeCount);
-    #endif
-    //filter memory type and memory properties ,a select a most suitable memory type
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
-    }
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
-    throw std::runtime_error("failed to find suitable memory type!");
+    //record copy command into command buffFVer
+    VkBufferCopy copyRegion{};
+    copyRegion.srcOffset = 0; // Optional
+    copyRegion.dstOffset = 0; // Optional
+    copyRegion.size = size;
+    vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 
+    vkEndCommandBuffer(commandBuffer);
+
+    //submit command buffer into queue
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    vkQueueSubmit(vulkanDevice->transferQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vulkanDevice->transferQueue);
+
+    vkFreeCommandBuffers(vulkanDevice->device, commandPool, 1, &commandBuffer);
 }
+
 /*
  * we tell vulkan the veretx buffer foramt in create pipeline object 
  * then we should crate a vertex buffer as a vetex data container,
@@ -144,54 +202,88 @@ uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 VkBuffer vertexBuffer;
 VkDeviceMemory vertexBufferMemory;
 void createVertexBuffer() {
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = sizeof(vertices[0]) * vertices.size(); // container size , default is size of vertex array
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;//for which purpose the data in the buffer is going to be used
-    //buffer can be owned by a specific queue family or be shared between multiple at the same time, now select exclusive
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size(); //cal vertex buffer size
+    
+    //create a stagingBuffer, this buffer can visable by cpu and stored vertex data
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        bufferSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,  /*this is a transfer source buffer*/
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,  /*find memory section in physical device condition , cpu visable and non-cacheable*/
+        stagingBuffer,  /*return  handle*/
+        stagingBufferMemory  /*return Memory handle*/
+    );
 
-    if (vkCreateBuffer(vulkanDevice->device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create vertex buffer!");
-    }
-    printf("create vertex buffer container\r\n");
-    //at this point , we create a vertex buffer container , then we should alloc a memory for it
-
-    /* first we should inquire how many memory does vertex buffer container need use vkGetBufferMemoryRequirements function
-     * then we will get a detail of vertex buffer's memory usage 
-     * 1. size : the size of the required amount of memory in bytes
-     * 2. alignment : The offset in bytes where the buffer begins in the allocated region of memory
-     * 3. memoryTypeBits: bit field of the memory types that are suitable for the buffer
-     * 
-     */
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(vulkanDevice->device, vertexBuffer, &memRequirements);
-
-    //memory alloc
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size; // information form vkGetBufferMemoryRequirements with vertex buffer
-    //pick the most suitable memory type from physical support memory type list , 
-    //with desired memory type(memory type inquire for vertex buffer by vkGetBufferMemoryRequirements) and properties(visible)
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(vulkanDevice->device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate vertex buffer memory!");
-    }
-    printf("allocate vertex buffer memeory,memoryType = 0x%x , size=0x%x\r\n",allocInfo.memoryTypeIndex ,(uint64_t)allocInfo.allocationSize);
-    //binding vertex buffer container and acutally buffer allocated
-
-    vkBindBufferMemory(vulkanDevice->device, vertexBuffer, vertexBufferMemory, 0);
-    printf("bind vertex buffer with memory\r\n");
-    //copy data from system memory into vetex buffer 
-    //because we use VK_MEMORY_PROPERTY_HOST_COHERENT_BIT as a memory condition to pick up a memory type
-    //so the copy is immediately without cache , ohterwise ,we can use vkFlushMappedMemoryRanges to flush cache
+    /*initial data into staging buffer*/
     void* data;
-    vkMapMemory(vulkanDevice->device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-    memcpy(data, vertices.data(), (size_t) bufferInfo.size);
-    vkUnmapMemory(vulkanDevice->device, vertexBufferMemory);
+    vkMapMemory(vulkanDevice->device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, vertices.data(), (size_t) bufferSize);
+    vkUnmapMemory(vulkanDevice->device, stagingBufferMemory);
 
-    printf("initial data into veretx buffer\r\n");
+    //now we do not copy data to vetex buffer , copy opertion will happend by GPU
+    //gpu will transfer stagingbuffer data to vertex buffer
+    
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        bufferSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,  /*this is a transfer dest buffer and of course it is vertex buffer*/
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,  /*we can use gpu local memory which cpu can not touch , and it can not be map*/
+        vertexBuffer,  /*return vertexBuffer handle*/
+        vertexBufferMemory  /*return vertexBufferMemory handle*/
+    );
+
+    //we can copy stagingbuffer to vertex buffer use command buffer and queue commit
+    __copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+    vkDestroyBuffer(vulkanDevice->device, stagingBuffer, nullptr);
+    vkFreeMemory(vulkanDevice->device, stagingBufferMemory, nullptr);
+}
+VkBuffer indexBuffer;
+VkDeviceMemory indexBufferMemory;
+void createIndexBuffer() {
+    VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size(); //cal vertex buffer size
+    
+    //create a stagingBuffer, this buffer can visable by cpu and stored vertex data
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        bufferSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,  /*this is a transfer source buffer*/
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,  /*find memory section in physical device condition , cpu visable and non-cacheable*/
+        stagingBuffer,  /*return  handle*/
+        stagingBufferMemory  /*return Memory handle*/
+    );
+
+    /*initial data into staging buffer*/
+    void* data;
+    vkMapMemory(vulkanDevice->device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, indices.data(), (size_t) bufferSize);
+    vkUnmapMemory(vulkanDevice->device, stagingBufferMemory);
+
+    //now we do not copy data to vetex buffer , copy opertion will happend by GPU
+    //gpu will transfer stagingbuffer data to vertex buffer
+    
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        bufferSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,  /*this is a transfer dest buffer and of course it is index buffer*/
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,  /*we can use gpu local memory which cpu can not touch , and it can not be map*/
+        indexBuffer,  /*return vertexBuffer handle*/
+        indexBufferMemory  /*return vertexBufferMemory handle*/
+    );
+
+    //we can copy stagingbuffer to vertex buffer use command buffer and queue commit
+    __copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+    vkDestroyBuffer(vulkanDevice->device, stagingBuffer, nullptr);
+    vkFreeMemory(vulkanDevice->device, stagingBufferMemory, nullptr);
 }
 #endif
 
@@ -332,47 +424,6 @@ void createDescriptorSets(){
 
         //link descript set(include descript layout (uniform data format)) and uniform buffer
         vkUpdateDescriptorSets(vulkanDevice->device, 1, &descriptorWrite, 0, nullptr);
-    }
-}
-#endif
-/*
- * Commands in Vulkan, like drawing operations and memory transfers,
- * are not executed directly using function calls.
- * You have to record all of the operations you want to perform in command buffer objects
- *
- * first will should create CommandPool and then alloc a command buffer for recording command
- * second , alloc command buffer from command buffer pool
- */
-#ifdef COMMAND_BUFFER_RELATED_CODE
-VkCommandPool commandPool;
-std::vector<VkCommandBuffer> commandBuffers;
-void createCommandPool() {
-    QueueFamilyIndices queueFamilyIndices = vulkanDevice->findQueueFamilies(vulkanDevice->physicalDevice);
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    //get graphics queue index in findQueueFamilies
-    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-
-    if (vkCreateCommandPool(vulkanDevice->device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create command pool!");
-    }
-}
-
-/*secondary we can alloc a turely command buffer from commandPool we create before */
-void createCommandBuffer() {
-
-    commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-
-    if (vkAllocateCommandBuffers(vulkanDevice->device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate command buffers!");
     }
 }
 #endif
@@ -678,6 +729,9 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
+    //bind index buffer
+    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
     //dynamic state cmd , in this case we enable dynamic cmd
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -696,14 +750,8 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     //bind descriptor set and layout
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
-    //draw command
-    /*
-     *vertexCount: Even though we don't have a vertex buffer, we technically still have 3 vertices to draw.
-     *instanceCount: Used for instanced rendering, use 1 if you're not doing that.
-     *firstVertex: Used as an offset into the vertex buffer, defines the lowest value of gl_VertexIndex.
-     *firstInstance: Used as an offset for instanced rendering, defines the lowest value of
-     */
-    vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+    //draw command with index draw
+    vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
     vkCmdEndRenderPass(commandBuffer);
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -840,13 +888,15 @@ int main() {
     createDescriptorPool();
     createDescriptorSets();
 
-    createVertexBuffer();
+    createCommandPool();
+    createCommandBuffer();
+
     createRenderPass();
     crateGraphicsPipeline();
     createFramebuffer();
 
-    createCommandPool();
-    createCommandBuffer();
+    createVertexBuffer();
+    createIndexBuffer();
 
     createSyncObjects();//loop sync object
 

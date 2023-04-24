@@ -1,3 +1,5 @@
+#ifndef __SHADER_VULKAN_ARCH__
+#define __SHADER_VULKAN_ARCH__
 /*
  * Vulkan Shader Helper Arch 
  */
@@ -82,3 +84,5 @@ class vulkanShader{
         VkPipelineShaderStageCreateInfo shaderStateCreateInfo_;
         VkShaderStageFlagBits shaderType_;
 };
+
+#endif

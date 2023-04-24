@@ -34,4 +34,4 @@ subdir('src/firstTriangleWithVertexBuffer')
 subdir('src/firstTriangleWithStagingVertexBuffer')
 subdir('src/firstTriangleWithStagingIndexedVertexBuffer')
 subdir('src/uniformExamples')
-
+subdir('src/textureMapping')

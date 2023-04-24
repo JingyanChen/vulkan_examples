@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <windowsVulkanArch.h>
 #include <shaderVulkanArch.h>
+#include <commandBuffer.h>
 
 /*
  * GPU can offer different types of memory to allocate from.each type of memory varies in terms of allowed 
@@ -69,4 +70,55 @@ void createBuffer(VkDevice device , VkPhysicalDevice phyDevice, VkDeviceSize siz
     }
 
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
+}
+
+/*
+ * copy vkbuffer from src to dst , use gpu command and wait gpu execute done
+ */
+void copyBuffer(VkBuffer srcBuffer , VkBuffer dstBuffer, VkDeviceSize size, VkDevice device,VkQueue Queue , VkCommandPool commandPool){
+    /*create command buffer from command pool*/
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands(device,commandPool);
+
+    /*record a copy command into command buffer*/
+    VkBufferCopy copyRegion{};
+    copyRegion.size = size;
+    vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+    /*end record command buffer ,and submit command buffer into queue*/
+    endSingleTimeCommands(device,commandBuffer,Queue,commandPool);
+
+}
+
+/*copy image from buffer*/
+void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, VkDevice device,VkQueue Queue , VkCommandPool commandPool){
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands(device,commandPool);
+
+    //point out which region in buffer should be copy to image
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {
+        width,
+        height,
+        1
+    };
+
+    vkCmdCopyBufferToImage(
+        commandBuffer,
+        buffer,
+        image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,//which layout the image is currently using
+        1,
+        &region
+    );
+
+    endSingleTimeCommands(device,commandBuffer,Queue,commandPool);
 }

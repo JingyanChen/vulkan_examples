@@ -1,3 +1,5 @@
+#ifndef __WINDOWS_VULKAN_ARCH__
+#define __WINDOWS_VULKAN_ARCH__
 #include <stdint.h>
 
 #define GLFW_INCLUDE_VULKAN
@@ -799,3 +801,5 @@ class vkGraphicsDevice{
     }
     #endif
 };
+
+#endif
