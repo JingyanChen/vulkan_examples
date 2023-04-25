@@ -22,15 +22,48 @@
  * 6 finally record a bind descriptor command into command buffer link pipelineLayout in step 2 and descriptorset in step 4&5
  *   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
  * in ap we can update uniform buffer by uniform buffer memory anytime to sync data with gpu. --  updateUniformBuffer
+ * 
+ * 
+ * 
+ * how to sampler texture in shadedr
+ * 
+ * 1 load texture from file and copy the image into a staging buffer(which will copy its data into a gpu local buffer by gpu commander)
+ * 2 crate a vkImage object and alloc a memory for it(its usage is VK_IMAGE_USAGE_TRANSFER_DST_BIT for transfering buffer to image)
+ *   set vkImage's layout is IMAGE_LAYOUT_UNDEFINE 
+ * 3 transfer vkImage layout from VK_IMAGE_LAYOUT_UNDEFINED to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+ * 4 copy staging buffer texture data into vkImage layout(which is in VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL layout)
+ * 5 transfer vkImage layout from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+ *   (createTextureImage)--from now on , we create a vkImage which store texture pixel data and layout is VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+ * 6 vulkan can not directly access vkImage ,so we should warp vkImage into vkImageView ---createTextureImageView
+ * 7 (createTextureSampler)create sampler object and configure sampler attribute
+ * 
+ * from now on , we create a vkImageView and sampler , then we should input a texCoord form uniform
+ * 
+ * 8 add texCoord vertex data getBindingDescription tell vulkan how each vertex in vertex array layout ,point out stride
+ *   between vertex in vertex array
+ * 9 getAttributeDescriptions tell vulkan how many uniform data and what's the format and offset it is
+ *   in this case , we have three uniform data pos color and texCoord , select its format and offset and loaction in shader
+ *   when we want input data into vertex shader by vertex buffer , we should touch VkPipelineVertexInputStateCreateInfo->pVertexBindingDescriptions
+ *   and pVertexAttributeDescriptions
+ * 10 steup bindingDescription and attributeDescriptions into vertexInputyInfo when create pipeline object
+ * 11 (createDescriptorSetLayout) add sampler descriptor layout when create descriptorSetLayout object then create a 
+ *    pipeline layout by descriptorSetLayout when create pipeline object. in this case we add VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+ *    descript and it's binding = 1 into pipeline layout.
+ * 12 create a descriptorPool and create descript set for two type of descriptor VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER and VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+ *    in createDescriptorSets flow , link sampler object and vkImageview finally call vkUpdateDescriptorSets to make descriptset effect
+ * 
+ * 13 modify shader code to sampler texture form texture we binding
+ * 
  */
 
 static vkGraphicsDevice * vulkanDevice = new vkGraphicsDevice(800, 600);
-vulkanShader* vs = new vulkanShader("../src/uniformExamples/meta/vs.spv", VK_SHADER_STAGE_VERTEX_BIT);
-vulkanShader* ps = new vulkanShader("../src/uniformExamples/meta/ps.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+vulkanShader* vs = new vulkanShader("../src/textureMapping/meta/vs.spv", VK_SHADER_STAGE_VERTEX_BIT);
+vulkanShader* ps = new vulkanShader("../src/textureMapping/meta/ps.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 struct Vertex {
     glm::vec2 pos;
     glm::vec3 color;
+    glm::vec2 texCoord;
 
     //there are tow types of structures to describe vertex buffer
 
@@ -62,9 +95,11 @@ struct Vertex {
      * originating from a binding description.
      * 
      * at one word, descript vertex buffer format , how does data Gather together as one binary
+     * 
+     * here we add a new uniform as coordinates 
      */
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 
         attributeDescriptions[0].binding = 0; //which binding the per-vertex data comes
         attributeDescriptions[0].location = 0;//which location of the input in the vertex shader , now is 0
@@ -76,15 +111,20 @@ struct Vertex {
         attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[1].offset = offsetof(Vertex, color);
 
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
         return attributeDescriptions;
     }
 
 };
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 //index data is follow
@@ -108,7 +148,7 @@ uint32_t currentFrame = 0;
 #define RECORD_COMMAND_INTO_COMMAND_BUFFER_CODE
 #define VERTEX_BUFFER_CREATE_CODE
 #define DESCRIPTOR_SET_LAYOUT_UNIFORM_CODE
-#define CREATE_TEXTURE_IMAG_CODE
+#define SAMPLE_TEXTURE_RELATED_CODE
 #define MAIN_LOOP_CODE
 
 
@@ -156,7 +196,7 @@ void createCommandBuffer() {
 #endif
 
 
-#ifdef CREATE_TEXTURE_IMAG_CODE
+#ifdef SAMPLE_TEXTURE_RELATED_CODE
 
 VkImage textureImage;
 VkDeviceMemory textureImageMemory;
@@ -169,7 +209,7 @@ VkDeviceMemory textureImageMemory;
 void createTextureImage() {
     /*loading a picture from file*/
     int texWidth, texHeight, texChannels;
-    stbi_uc* pixels = stbi_load("../src/uniformExamples/texture/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    stbi_uc* pixels = stbi_load("../src/textureMapping/texture/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
@@ -248,6 +288,77 @@ void createTextureImage() {
      * shader reads should wait on transfer writes, 
      * specifically the shader reads in the fragment shader, because that's where we're going to use the texture
      */
+
+}
+/*
+ * note: images are accessed through image views rather than directly
+ */
+VkImageView textureImageView;
+void createTextureImageView() {
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = textureImage;//vkImage which should be warped into vkImageView
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(vulkanDevice->device, &viewInfo, nullptr, &textureImageView) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture image view!");
+    }
+
+}
+/*
+ * create texture sampler object
+ */
+VkSampler textureSampler;
+void createTextureSampler(){
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;//Magnification concerns the oversampling problem
+    samplerInfo.minFilter = VK_FILTER_LINEAR;//minification concerns undersampling
+
+    //transform function in sampler
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+    //anisotropic configure
+
+    //first we inqure if physical device is support anisotropic
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(vulkanDevice->physicalDevice, &properties);
+
+    //now we enable anisotropy function for better rendering result
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+    //boarder color we transform as boarder
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+
+    //we always use [0,1] range on all axes
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+    /*
+     * if a comparison function is enable , then texels will first be compared to a value
+     * and the result of that comparison is used in filtering operations.
+     * mainly used for percentage-closer filtering on shadow maps.
+     */
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+    /*mipmapping later to configure*/
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+
+    if (vkCreateSampler(vulkanDevice->device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture sampler!");
+    }
 
 }
 #endif
@@ -416,10 +527,24 @@ void createDescriptorSetLayout() {
      */
     uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 
+
+    /*now we add a new uniform descript layout for sampler*/
+    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+    samplerLayoutBinding.binding = 1;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;//point out this descript type is sampler
+    samplerLayoutBinding.pImmutableSamplers = nullptr;
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;//used in ps
+
+    /*
+     * create a acutally descriptor Set layout
+     * now we have two binding point
+     */
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(vulkanDevice->device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
@@ -472,14 +597,21 @@ void updateUniformBuffer(uint32_t currentImage) {
 //create a descriptor pool
 VkDescriptorPool descriptorPool;
 void createDescriptorPool(){
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    /*
+     * create a bigger descriptor pool 
+     */
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
     //create descriptor pool
@@ -514,18 +646,33 @@ void createDescriptorSets(){
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(UniformBufferObject);
 
+        /*binding sampler and vkImage here*/
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = textureImageView;
+        imageInfo.sampler = textureSampler;
+
         //this struct link descript set we created before in this function and uniform buffer created before 
-        VkWriteDescriptorSet descriptorWrite{};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = descriptorSets[i]; //get descriptor set object
-        descriptorWrite.dstBinding = 0;//uniform buffer , now it is set as 0 in shader
-        descriptorWrite.dstArrayElement = 0;//descriptor can be array so we specify 0
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//descriptor type is uniform 
-        descriptorWrite.descriptorCount = 1;//
-        descriptorWrite.pBufferInfo = &bufferInfo;//link uniform buffer
+        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].dstSet = descriptorSets[i]; //get descriptor set object
+        descriptorWrites[0].dstBinding = 0;//uniform buffer , now it is set as 0 in shader
+        descriptorWrites[0].dstArrayElement = 0;//descriptor can be array so we specify 0
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;//descriptor type is uniform 
+        descriptorWrites[0].descriptorCount = 1;//
+        descriptorWrites[0].pBufferInfo = &bufferInfo;//link uniform buffer
+
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = descriptorSets[i];
+        descriptorWrites[1].dstBinding = 1; //binding code relate to shader code : layout(binding = 1) uniform sampler2D texSampler;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;//descriptor type is sampler 
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &imageInfo;//link image info with vkImage and sampler
 
         //link descript set(include descript layout (uniform data format)) and uniform buffer
-        vkUpdateDescriptorSets(vulkanDevice->device, 1, &descriptorWrite, 0, nullptr);
+        vkUpdateDescriptorSets(vulkanDevice->device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 }
 #endif
@@ -627,7 +774,7 @@ void crateGraphicsPipeline() {
     //tell vulkan how many attribute are there in the one vertex , now is two (pos ,color)
     vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
     vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;//bake to pipeline objecty
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();//bake to pipeline objecty
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();//bake to pipeline object
     //from now on ,we tell vulkan the format of the vertex buffer , then we should tell a initaial vertex data to vulkan
 
 
@@ -984,23 +1131,27 @@ void drawFrame() {
 #endif
 
 int main() {
-    /*uniform related*/
-    createDescriptorSetLayout();
-    createUniformBuffers();
-    createDescriptorPool();
-    createDescriptorSets();
 
     createCommandPool();
     createCommandBuffer();
-
-    createRenderPass();
-    crateGraphicsPipeline();
-    createFramebuffer();
 
     createVertexBuffer();
     createIndexBuffer();
     
     createTextureImage();
+    createTextureImageView();
+    createTextureSampler();
+
+    /*uniform related*/
+    createDescriptorSetLayout();
+    createUniformBuffers();
+
+    createDescriptorPool();
+    createDescriptorSets();
+
+    createRenderPass();
+    crateGraphicsPipeline();
+    createFramebuffer();
 
     createSyncObjects();//loop sync object
 

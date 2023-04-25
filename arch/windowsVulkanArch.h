@@ -435,7 +435,11 @@ class vkGraphicsDevice{
             swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();    
         }
 
-        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && indices.isComplete() && extensionsSupported && swapChainAdequate;
+        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && 
+                                        indices.isComplete() && 
+                                        extensionsSupported && 
+                                        swapChainAdequate &&
+                                        deviceFeatures.samplerAnisotropy;
     }
     void pickPhysicalDevice() {
 

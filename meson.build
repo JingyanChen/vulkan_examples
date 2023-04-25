@@ -29,6 +29,22 @@ dependencies : [glfwLibs,vulkanLibs],
 include_directories : [glfw_header_dir,vulkan_sdk_header_dir,glm_header_dir],
 cpp_args: '/std:c++17')
 
+
+commonLibSource = [
+    join_paths(meson.source_root(),'lib/vulkanHelper/src','buffer.cpp'),
+    join_paths(meson.source_root(),'lib/vulkanHelper/src','image.cpp'),
+    join_paths(meson.source_root(),'lib/vulkanHelper/src','commandBuffer.cpp'),
+]
+commonLibInc = join_paths(meson.source_root(),'lib/vulkanHelper/inc')
+
+libCommon = static_library(
+  'libCommon',commonLibSource,
+  dependencies : [glfwLibs,vulkanLibs], 
+  include_directories : [commonLibInc,glfw_header_dir,vulkan_sdk_header_dir,join_paths(meson.source_root(),'arch')],
+  cpp_args: ['/std:c++17'],
+  )
+
+
 subdir('src/firstTriangle')
 subdir('src/firstTriangleWithVertexBuffer')
 subdir('src/firstTriangleWithStagingVertexBuffer')
