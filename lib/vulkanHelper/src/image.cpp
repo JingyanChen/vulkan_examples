@@ -4,6 +4,12 @@
 #include <shaderVulkanArch.h>
 #include <buffer.h>
 #include <commandBuffer.h>
+/*
+ * helper function if format has stencil
+ */
+bool hasStencilComponent(VkFormat format) {
+    return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
 
 void createImage(VkDevice device , VkPhysicalDevice phyDevice, uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
     VkImageCreateInfo imageInfo{};
@@ -81,7 +87,22 @@ void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayo
      * so only one level and layer are specified
      */
     barrier.image = image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+    /*
+     * special for VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL layout 
+     * we will change aspectMask form fixed VK_IMAGE_ASPECT_COLOR_BIT to 
+     * VK_IMAGE_ASPECT_STENCIL_BIT or VK_IMAGE_ASPECT_DEPTH_BIT
+     */
+    if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+        if (hasStencilComponent(format)) {
+            barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
@@ -139,6 +160,23 @@ void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayo
 
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
         destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        /*
+         * if VK_IMAGE_LAYOUT_UNDEFINED transfer to VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL 
+         * barrier of pipeline stage rang is VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT(0) to 
+         * VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)
+         * pipeline read depth vkImage for depth test should happen in the VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT stage
+         * and write new depth result in VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT , 
+         * we should select the earliest pipeline stage , so that it is ready for usage as depth attachment when it needs to be.
+         * 
+         * in one word
+         * before we use the depth vkimage(VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT) , transfer vkImage layout should be done.
+         */
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     } else {
         throw std::invalid_argument("unsupported layout transition!");
     }
@@ -154,4 +192,45 @@ void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayo
     );
 
     endSingleTimeCommands(device,commandBuffer,Queue,commandPool);
+}
+
+/*
+ * find device supporty format
+ * quire candidates format in device ,if it have tiling and feature
+ * if it is support diresed feature , then return the format
+ */
+VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features,VkPhysicalDevice phyDevice) {
+    for (VkFormat format : candidates) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(phyDevice, format, &props);
+
+        if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+            return format;
+        } else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("failed to find supported format!");
+}
+
+/*warp image into imageView,subresourceRange use default configuration 2d*/
+VkImageView  createImageViewDefault(VkDevice device , VkImage image , VkFormat format , VkImageAspectFlags aspectFlags){
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;//vkImage which should be warped into vkImageView
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = aspectFlags;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    VkImageView imageView;
+    if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture image view!");
+    }
+    
+    return imageView;
 }
