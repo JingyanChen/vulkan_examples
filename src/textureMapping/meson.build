@@ -15,21 +15,6 @@ capture:true,
 output:[projectName +'_ps.spv']
 )
 
-commonLibSource = [
-    join_paths(meson.source_root(),'lib/vulkanHelper/src','buffer.cpp'),
-    join_paths(meson.source_root(),'lib/vulkanHelper/src','image.cpp'),
-    join_paths(meson.source_root(),'lib/vulkanHelper/src','commandBuffer.cpp'),
-]
-commonLibInc = join_paths(meson.source_root(),'lib/vulkanHelper/inc')
-
-libCommon = static_library(
-  'libCommon',commonLibSource,
-  dependencies : [glfwLibs,vulkanLibs], 
-  include_directories : [commonLibInc,glfw_header_dir,vulkan_sdk_header_dir,join_paths(meson.source_root(),'arch')],
-  cpp_args: ['/std:c++17'],
-  )
-
-
 executable(projectName, ['main.cpp',vsShader,psShader],
 install : true,
 install_dir : meson.build_root(),

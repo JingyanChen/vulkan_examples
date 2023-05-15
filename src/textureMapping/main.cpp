@@ -250,6 +250,22 @@ void createTextureImage() {
      * so vkImage layout should be VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
      * this function will use pipeline barrier to make sure image layout transition is done
      */
+    /*
+     * when transfer vkImage layout from VK_IMAGE_LAYOUT_UNDEFINED to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+     * pipeline barrier configuration is 
+     * source stage : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+     * des stage : VK_PIPELINE_STAGE_TRANSFER_BIT
+     * 
+     * barriers.srcAccessMask = 0
+     * barriers.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT
+     * 
+     * that means 
+     * 1. do not need to wait any pipeline stage because source stage is VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+     * 2. opertion after barriers , will blocked its pipeline stage as VK_PIPELINE_STAGE_TRANSFER_BIT because dst stage = VK_PIPELINE_STAGE_TRANSFER_BIT
+     * 
+     * vulkan driver will make sure when vkImage layout transition complete , it will visible to VK_PIPELINE_STAGE_TRANSFER_BIT 
+     * in the other wold , cache invalide will occurs , to make sure pipeline stage read up-to-date data which store in L2 chache
+     */
     transitionImageLayout(textureImage, //vkImage we create before
                          VK_FORMAT_R8G8B8A8_SRGB,//vkImage format
                          VK_IMAGE_LAYOUT_UNDEFINED,//old image layout , do not care

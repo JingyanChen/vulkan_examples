@@ -20,6 +20,7 @@ vulkanLibs=meson.get_compiler('c').find_library('vulkan-1',
 
 glm_header_dir = join_paths(meson.source_root(),'lib/glm/include')
 
+tinyObjLoader_dir = join_paths(meson.source_root(),'lib/tinyobjloader')
 
 spriv_compiler = join_paths(meson.source_root(),'lib/vulkan_sdk/Bin','glslc.exe')
 
@@ -35,7 +36,10 @@ commonLibSource = [
     join_paths(meson.source_root(),'lib/vulkanHelper/src','image.cpp'),
     join_paths(meson.source_root(),'lib/vulkanHelper/src','commandBuffer.cpp'),
 ]
-commonLibInc = join_paths(meson.source_root(),'lib/vulkanHelper/inc')
+commonLibInc = [
+    join_paths(meson.source_root(),'lib/vulkanHelper/inc'),
+    tinyObjLoader_dir,
+]
 
 libCommon = static_library(
   'libCommon',commonLibSource,
@@ -52,3 +56,5 @@ subdir('src/firstTriangleWithStagingIndexedVertexBuffer')
 subdir('src/uniformExamples')
 subdir('src/textureMapping')
 subdir('src/depthTest')
+subdir('src/Box')
+subdir('src/loadModels')
