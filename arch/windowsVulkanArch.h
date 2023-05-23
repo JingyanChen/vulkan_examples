@@ -19,6 +19,7 @@
 #include <optional>
 #include <set>
 
+#include "camera.hpp"
 /*
  * windows Vulkan Arch 
  * packaging windows platform window operation
@@ -119,6 +120,8 @@ class vkGraphicsDevice{
      * This Function should run in loop
      * and is windows related
      */
+    float deltaTime = 0.0f; 
+    float lastFrame = 0.0f; 
     void vkGraphicsDeviceHandle(void){
         if(!drawFrame){
             printf("draw function is empty");
@@ -127,11 +130,18 @@ class vkGraphicsDevice{
             if(drawFrame)
                 drawFrame();
             glfwPollEvents();
+
+            //update frame time
+            float currentFrame = glfwGetTime();
+            deltaTime = currentFrame - lastFrame;
+            lastFrame = currentFrame;
         }
     }
 
     /* glfw windows related*/
     #ifdef GLFW_WINDOW_CODE
+
+    Camera camera;
     GLFWwindow* window;
     uint32_t window_width = 0;
     uint32_t window_height = 0;
@@ -146,6 +156,17 @@ class vkGraphicsDevice{
         window = glfwCreateWindow(window_width, window_height, "Vulkan", nullptr, nullptr);
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+        //initial camera compotent
+		// Setup a default look-at camera
+		camera.setCamera(glm::vec3(0.0f, 0.0f, 3.0f),//default camera pos is (0,0,2)
+                         glm::vec3(0.0f, 0.0f, -4.0f), //front is nagative z
+                         glm::vec3(0.0f, 1.0f, 0.0f)//default camera up       
+                         );
+        //default fov = 60 znear = 1.0 zfar = 256.0
+		camera.setPerspective(45.0f, (float)window_width / (float)window_height, 1.0f, 100.0f);
+		// Values not set here are initialized in the base class constructor
+
     }
 
     void recreateSwapChain()

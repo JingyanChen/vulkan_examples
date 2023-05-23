@@ -1,5 +1,6 @@
 #include <windowsVulkanArch.h>
 #include <shaderVulkanArch.h>
+#include <cameraHelper.h>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -9,13 +10,9 @@
 #include <buffer.h>
 #include <chrono>
 
-#include "camera.hpp"
-
 static vkGraphicsDevice * vulkanDevice = new vkGraphicsDevice(1280, 720);
 vulkanShader* vs = new vulkanShader("../src/t_firstTriangle/meta/vs.spv", VK_SHADER_STAGE_VERTEX_BIT);
 vulkanShader* ps = new vulkanShader("../src/t_firstTriangle/meta/ps.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
-
-Camera camera;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -59,9 +56,6 @@ void createUniformBuffers(){
         vkMapMemory(vulkanDevice->device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
     }
 }
-glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f, -3.0f);
-glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f,  1.0f);
-glm::vec3 cameraUp    = glm::vec3(0.0f, 1.0f,  0.0f);
 void updateUniformBuffer(uint32_t currentImage) {
     static auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -69,11 +63,9 @@ void updateUniformBuffer(uint32_t currentImage) {
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
     UniformBufferObject ubo{};
-    ubo.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
-    ubo.view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
-    ubo.proj = glm::perspective(glm::radians(45.0f), vulkanDevice->swapChainExtent.width / (float) vulkanDevice->swapChainExtent.height, 0.1f, 100.0f);
-
-    ubo.proj[1][1] *= -1;
+    ubo.model = glm::mat4(1.0f);
+    ubo.view = vulkanDevice->camera.matrices.view;
+    ubo.proj = vulkanDevice->camera.matrices.perspective;
 
     memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
@@ -597,7 +589,10 @@ void drawFrame() {
      */
     uint32_t imageIndex;
     VkResult result = vkAcquireNextImageKHR(vulkanDevice->device, vulkanDevice->swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
-    
+
+    /*update uniform data*/
+    updateUniformBuffer(currentFrame);
+
     vkResetCommandBuffer(commandBuffers[currentFrame], 0);
     // select which framebuffer shouled be used into renderpass ,when begain renderpass.
     recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
@@ -663,6 +658,11 @@ void drawFrame() {
 
 int main() {
 
+    /*
+     * camera init,
+     * register key handle, mouse handle 
+     */
+    cameraDeviceInit(vulkanDevice);
 
     /*
      * now we should crate a uniform buffer and update initial uniform data into it
@@ -703,10 +703,6 @@ int main() {
     createCommandBuffer();
 
     createSyncObjects();//loop sync object
-
-    /*update uniform data*/
-    updateUniformBuffer(0);
-    updateUniformBuffer(1);
     
     vulkanDevice->drawFrame = drawFrame;
     vulkanDevice->vkGraphicsDeviceHandle();
