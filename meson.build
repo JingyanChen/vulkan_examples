@@ -36,10 +36,7 @@ commonLibSource = [
     join_paths(meson.source_root(),'lib/vulkanHelper/src','image.cpp'),
     join_paths(meson.source_root(),'lib/vulkanHelper/src','commandBuffer.cpp'),
 ]
-commonLibInc = [
-    join_paths(meson.source_root(),'lib/vulkanHelper/inc'),
-    tinyObjLoader_dir,
-]
+commonLibInc = join_paths(meson.source_root(),'lib/vulkanHelper/inc')
 
 libCommon = static_library(
   'libCommon',commonLibSource,
@@ -58,3 +55,6 @@ subdir('src/textureMapping')
 subdir('src/depthTest')
 subdir('src/Box')
 subdir('src/loadModels')
+
+#transplant form vulkan example
+subdir('src/t_firstTriangle')
