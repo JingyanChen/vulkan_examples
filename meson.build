@@ -59,3 +59,4 @@ subdir('src/loadModels')
 
 #transplant form vulkan example
 subdir('src/t_firstTriangle')
+subdir('src/t_pipeline')

@@ -61,7 +61,7 @@ static void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
     lastX = xpos;
     lastY = ypos;
 
-    float sensitivity = 0.1f; // change this value to your liking
+    float sensitivity = 0.3f; // change this value to your liking
     xoffset *= sensitivity;
     yoffset *= sensitivity;
 
@@ -71,7 +71,7 @@ static void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
     }
     
     yaw += xoffset;
-    pitch += yoffset;
+    pitch -= yoffset;
 
     // make sure that when pitch is out of bounds, screen doesn't get flipped
     if (pitch > 89.0f)
