@@ -22,6 +22,143 @@ const int MAX_FRAMES_IN_FLIGHT = 2;
 #define RECORD_COMMAND_INTO_COMMAND_BUFFER_CODE
 #define MAIN_LOOP_CODE
 
+/*
+ * Commands in Vulkan, like drawing operations and memory transfers,
+ * are not executed directly using function calls.
+ * You have to record all of the operations you want to perform in command buffer objects
+ *
+ * first will should create CommandPool and then alloc a command buffer for recording command
+ * second , alloc command buffer from command buffer pool
+ */
+#ifdef COMMAND_BUFFER_RELATED_CODE
+VkCommandPool commandPool;
+std::vector<VkCommandBuffer> commandBuffers;
+void createCommandPool() {
+    QueueFamilyIndices queueFamilyIndices = vulkanDevice->findQueueFamilies(vulkanDevice->physicalDevice);
+
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    //get graphics queue index in findQueueFamilies
+    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+
+    if (vkCreateCommandPool(vulkanDevice->device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create command pool!");
+    }
+}
+
+/*secondary we can alloc a turely command buffer from commandPool we create before */
+void createCommandBuffer() {
+
+    commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+    if (vkAllocateCommandBuffers(vulkanDevice->device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate command buffers!");
+    }
+}
+#endif
+
+/*
+ * add vertex buffer and indices
+ */
+struct Vertex {
+	float position[2];
+	float color[3];
+
+    static VkVertexInputBindingDescription getBindingDescription(){
+
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0; // specifies the index of the binding in the arrary of bindings,now only one
+        bindingDescription.stride = sizeof(Vertex);//specifies the numver of bytes from one entry to the next,now is size of Vertex
+        /*
+         * VK_VERTEX_INPUT_RATE_VERTEX: Move to the next data entry after each vertex
+         * VK_VERTEX_INPUT_RATE_INSTANCE: Move to the next data entry after each instance ,about instanced rendering
+         */
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        return bindingDescription; 
+    }
+
+    /*
+     * 2: attribute descriptions
+     * we hve two attribute ,so we need two vertexInputAttributeDescription pos and color
+     * an attribute description struct describes how to extract a vertex attribute from chunk of vertex data 
+     * originating from a binding description.
+     * 
+     * at one word, descript vertex buffer format , how does data Gather together as one binary
+     */
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+        attributeDescriptions[0].binding = 0; //which binding the per-vertex data comes
+        attributeDescriptions[0].location = 0;//which location of the input in the vertex shader , now is 0
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;//data format in vertex buffer 
+        attributeDescriptions[0].offset = offsetof(Vertex, position);//offset of pos in vertex
+
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+
+
+};
+
+std::vector<Vertex> vertices =
+{
+	{ {  0.0f, -1.0f }, { 1.0f, 0.0f, 0.0f } },
+	{ {  1.0f,  1.0f }, { 0.0f, 1.0f, 0.0f } },
+	{ {  -1.0f, 1.0f }, { 0.0f, 0.0f, 1.0f } }
+};
+VkBuffer vertexBuffer;
+VkDeviceMemory vertexBufferMemory;
+void createVertexBuffer()
+{
+    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+    //create staging buffer
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        bufferSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,  /*this is a transfer source buffer*/
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,  /*find memory section in physical device condition , cpu visable and non-cacheable*/
+        stagingBuffer,  /*return  handle*/
+        stagingBufferMemory  /*return Memory handle*/
+    );
+    
+    //copy vertex data into staging buffer
+    void* data;
+    vkMapMemory(vulkanDevice->device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, vertices.data(), (size_t) bufferSize);
+    vkUnmapMemory(vulkanDevice->device, stagingBufferMemory);
+
+    //create vertex buffer
+    createBuffer( 
+        vulkanDevice->device,  /*logic device*/
+        vulkanDevice->physicalDevice, /*physical device*/
+        bufferSize,  /*buffer size*/
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,  /*this is a transfer dest buffer and of course it is vertex buffer*/
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,  /*we can use gpu local memory which cpu can not touch , and it can not be map*/
+        vertexBuffer,  /*return vertexBuffer handle*/
+        vertexBufferMemory  /*return vertexBufferMemory handle*/
+    );
+
+    copyBuffer(stagingBuffer, vertexBuffer, bufferSize, vulkanDevice->device,vulkanDevice->transferQueue,commandPool);
+
+    vkDestroyBuffer(vulkanDevice->device, stagingBuffer, nullptr);
+    vkFreeMemory(vulkanDevice->device, stagingBufferMemory, nullptr);
+}
 
 /*uniform MPV object format*/
 struct UniformBufferObject{
@@ -256,11 +393,23 @@ void crateGraphicsPipeline() {
         psShaderStageInfo,
     };
 
+    //record binding index and format betweent each vertex data in vertex data array
+    auto bindingDescription = Vertex::getBindingDescription();
+    //record vertex buffer interal attribute , now we have two attribute in each vertex(pos and color)
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
     /*vertex input related*/
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+   //bake vertex description(such as vertex array format and vertex inner format information) into pipeline object
+    // we just only use one description,refer to binding index in attributeDescriptions and bindingDescription
+    //vertexBindingDescriptionCount is not 1 , is special usage
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    //tell vulkan how many attribute are there in the one vertex , now is two (pos ,color)
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;//bake to pipeline objecty
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();//bake to pipeline objecty
+    //from now on ,we tell vulkan the format of the vertex buffer , then we should tell a initaial vertex data to vulkan
 
     /*input assembly related*/
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -420,48 +569,6 @@ void createFramebuffer() {
 #endif
 
 /*
- * Commands in Vulkan, like drawing operations and memory transfers,
- * are not executed directly using function calls.
- * You have to record all of the operations you want to perform in command buffer objects
- *
- * first will should create CommandPool and then alloc a command buffer for recording command
- * second , alloc command buffer from command buffer pool
- */
-#ifdef COMMAND_BUFFER_RELATED_CODE
-VkCommandPool commandPool;
-std::vector<VkCommandBuffer> commandBuffers;
-void createCommandPool() {
-    QueueFamilyIndices queueFamilyIndices = vulkanDevice->findQueueFamilies(vulkanDevice->physicalDevice);
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    //get graphics queue index in findQueueFamilies
-    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-
-    if (vkCreateCommandPool(vulkanDevice->device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create command pool!");
-    }
-}
-
-/*secondary we can alloc a turely command buffer from commandPool we create before */
-void createCommandBuffer() {
-
-    commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-
-    if (vkAllocateCommandBuffers(vulkanDevice->device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate command buffers!");
-    }
-}
-#endif
-
-/*
  * record command flow
  * 1. begin command buffer
  * 2. begin renderpass
@@ -517,6 +624,10 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
 
     //bind descriptor set and layout
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+
+    VkBuffer vertexBuffers[] = {vertexBuffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
     //draw command
     /*
@@ -701,6 +812,8 @@ int main() {
 
     createCommandPool();
     createCommandBuffer();
+
+    createVertexBuffer();
 
     createSyncObjects();//loop sync object
     
