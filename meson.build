@@ -56,6 +56,8 @@ subdir('src/textureMapping')
 subdir('src/depthTest')
 subdir('src/Box')
 subdir('src/loadModels')
+subdir('src/ball')
+
 
 #transplant form vulkan example
 subdir('src/t_firstTriangle')
